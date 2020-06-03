@@ -45,8 +45,6 @@ constexpr ::Elf64_Off kHeaderSize = sizeof(::Elf64_Ehdr) + sizeof(::Elf64_Phdr) 
 constexpr ::Elf64_Off kFooterSize = sizeof(::Elf64_Shdr) * kNSectionHeaders;
 //! 文字列テーブル
 constexpr char kShStrTab[] = "\0.text\0.shstrtab\0.bss";
-//! Brainfuckの文字
-const std::string kBrainfuckChars{"><+-.,[]"};
 
 
 /*!
@@ -255,12 +253,27 @@ main()
   }
 
   // 連続文字等のカウントを楽にするために予めBrainfuckに関係しない文字を取り除く
+  auto isOutputOnly = true;
   source.erase(
     std::remove_if(
       std::begin(source),
       std::end(source),
-      [](const auto& e) {
-        return kBrainfuckChars.find(e) == std::string::npos;
+      [&isOutputOnly](const auto& e) {
+        switch (e) {
+          case',':
+            isOutputOnly = false;
+            // Fa;; throgh
+          case '>':
+          case '<':
+          case '+':
+          case '-':
+          case '.':
+          case '[':
+          case ']':
+            return false;
+          default:
+            return true;
+        }
       }),
     std::end(source));
 
@@ -273,6 +286,12 @@ main()
   // mov edx, 0x01
   writeBytes(ofs, {0xba});
   writeAs<std::uint32_t>(ofs, 0x00000001);
+  if (isOutputOnly) {
+    // mov eax, edx
+    writeBytes(ofs, {0x89, 0xd0});
+    // mov edi, edx
+    writeBytes(ofs, {0x89, 0xd7});
+  }
 
   std::stack<std::ostream::pos_type> loopStack;
   for (decltype(source)::size_type i = 0; i < source.size(); i++) {
@@ -344,10 +363,12 @@ main()
         }
         break;
       case '.':
-        // mov eax, edx
-        writeBytes(ofs, {0x89, 0xd0});
-        // mov edi, edx
-        writeBytes(ofs, {0x89, 0xd7});
+        if (!isOutputOnly) {
+          // mov eax, edx
+          writeBytes(ofs, {0x89, 0xd0});
+          // mov edi, edx
+          writeBytes(ofs, {0x89, 0xd7});
+        }
         // syscall
         writeBytes(ofs, {0x0f, 0x05});
         break;
