@@ -534,6 +534,7 @@ main()
   // pop rdi
   // pop rbp
   writeBytes(ofs, {0x5d, 0x5f, 0x5e});
+#if 0
   // xor ecx, ecx
   writeBytes(ofs, {0x31, 0xc9});
   // mov rsi, ds:{0x********}  # exit
@@ -545,6 +546,20 @@ main()
   writeAs<std::uint8_t>(ofs, 0x20);
   // call rsi
   writeBytes(ofs, {0xff, 0xd6});
+#else
+  // xor rax, rax
+  writeBytes(ofs, {0x48, 0x31, 0xc0});
+  // retq
+  writeAs<std::uint8_t>(ofs, 0xc3);
+  //  d:	48 31 c0             	xor    %rax,%rax
+  // 10:	c3                   	retq
+  // 11:	b8 00 00 00 00       	mov    $0x0,%eax
+  // 16:	48 83 c4 20          	add    $0x20,%rsp
+  // 1a:	5d                   	pop    %rbp
+  // 1b:	c3                   	retq
+  const auto exitAddrPos = ofs.tellp();
+  writeAs<std::uint32_t>(ofs, 0x00000000);  // Fill later
+#endif
 
   const auto codeSize = static_cast<std::size_t>(ofs.tellp()) - (kPeHeaderSizeWithPadding + kIdataSizeWithPadding);
   const auto codeSizeWithPadding = calcAlignedSize(codeSize, kCodeAlignment);
