@@ -47,6 +47,10 @@ constexpr ::Elf64_Off kFooterSize = sizeof(::Elf64_Shdr) * kNSectionHeaders;
 constexpr char kShStrTab[] = "\0.text\0.shstrtab\0.bss";
 //! Brainfuckの文字
 const std::string kBrainfuckChars{"><+-.,[]"};
+//! Brainfuckのセル数
+constexpr std::size_t kNBrainfuckCells = 65536;
+//! 出力バッファサイズ
+constexpr std::size_t kOutputBufferSize = 0x1000;
 
 
 /*!
@@ -133,7 +137,7 @@ writeHeader(std::ofstream& ofs, std::size_t codeSize)
   phdrBss.p_vaddr = kBssAddr;
   phdrBss.p_paddr = kBssAddr;
   phdrBss.p_filesz = 0x0000000000000000;
-  phdrBss.p_memsz = 0x0000000000010000;
+  phdrBss.p_memsz = kNBrainfuckCells + kOutputBufferSize;
   phdrBss.p_align = 0x0000000000001000;
   writeAs(ofs, phdrBss);
 }
@@ -199,7 +203,7 @@ writeFooter(std::ofstream& ofs, std::size_t codeSize)
   shdrBss.sh_flags = SHF_ALLOC | SHF_WRITE;
   shdrBss.sh_addr = kBssAddr;
   shdrBss.sh_offset = 0x0000000000001000;
-  shdrBss.sh_size = 0x0000000000010000;  // 65536 cells
+  shdrBss.sh_size = kNBrainfuckCells + kOutputBufferSize;  // 65536 cells + Output buffer
   shdrBss.sh_link = 0x00000000;
   shdrBss.sh_info = 0x00000000;
   shdrBss.sh_addralign = 0x0000000000000010;
@@ -267,12 +271,26 @@ main()
   // ヘッダ部分は一旦飛ばす（後に書き込む）
   ofs.seekp(kHeaderSize, std::ios_base::beg);
 
+#if 0
   // movabs rsi, {kBssAddr}
   writeBytes(ofs, {0x48, 0xbe});
-  writeAs(ofs, kBssAddr);
+  writeAs<std::uint64_t>(ofs, kBssAddr);
   // mov edx, 0x01
   writeBytes(ofs, {0xba});
   writeAs<std::uint32_t>(ofs, 0x00000001);
+#else
+  // movabs $0x4248000,%rbx
+  writeBytes(ofs, {0x48, 0xbb});
+  writeAs<std::uint64_t>(ofs, kBssAddr);
+  // movabs rsi, {kBssAddr}
+  writeBytes(ofs, {0x48, 0xbe});
+  writeAs<std::uint64_t>(ofs, kBssAddr + kNBrainfuckCells);
+  // movabs $0x4248000,%r8
+  writeBytes(ofs, {0x49, 0xb8});
+  writeAs<std::uint64_t>(ofs, kBssAddr + kNBrainfuckCells + kOutputBufferSize);
+  // mov %rsi,%rcx
+  writeBytes(ofs, {0x48, 0x89, 0xf1});
+#endif
 
   std::stack<std::ostream::pos_type> loopStack;
   for (decltype(source)::size_type i = 0; i < source.size(); i++) {
@@ -282,16 +300,16 @@ main()
           const auto cnt = countSuccChars(source, '>', i + 1) + 1;
           i += cnt - 1;
           if (cnt > 127) {
-            // add rsi, {cnt}
-            writeBytes(ofs, {0x48, 0x81, 0xc6});
+            // add rbx, {cnt}
+            writeBytes(ofs, {0x48, 0x81, 0xc3});
             writeAs<std::uint32_t>(ofs, cnt);
           } else if (cnt > 1) {
-            // add rsi, {cnt}
-            writeBytes(ofs, {0x48, 0x83, 0xc6});
+            // add rbx, {cnt}
+            writeBytes(ofs, {0x48, 0x83, 0xc3});
             writeAs<std::uint8_t>(ofs, cnt);
           } else {
-            // inc rsi
-            writeBytes(ofs, {0x48, 0xff, 0xc6});
+            // inc rbx
+            writeBytes(ofs, {0x48, 0xff, 0xc3});
           }
         }
         break;
@@ -300,16 +318,16 @@ main()
           const auto cnt = countSuccChars(source, '<', i + 1) + 1;
           i += cnt - 1;
           if (cnt > 127) {
-            // sub rsi, {cnt}
-            writeBytes(ofs, {0x48, 0x81, 0xee});
+            // sub rbx, {cnt}
+            writeBytes(ofs, {0x48, 0x81, 0xeb});
             writeAs<std::uint32_t>(ofs, cnt);
           } else if (cnt > 1) {
-            // sub rsi, {cnt}
-            writeBytes(ofs, {0x48, 0x83, 0xee});
+            // sub rbx, {cnt}
+            writeBytes(ofs, {0x48, 0x83, 0xeb});
             writeAs<std::uint8_t>(ofs, cnt);
           } else {
-            // dec rsi
-            writeBytes(ofs, {0x48, 0xff, 0xce});
+            // dec rbx
+            writeBytes(ofs, {0x48, 0xff, 0xcb});
           }
         }
         break;
@@ -319,12 +337,12 @@ main()
           i += cnt - 1;
           cnt %= 256;
           if (cnt > 1) {
-            // add byte ptr [rsi], {cnt}
-            writeBytes(ofs, {0x80, 0x06});
+            // add byte ptr [rbx], {cnt}
+            writeBytes(ofs, {0x80, 0x03});
             writeAs<std::uint8_t>(ofs, cnt);
           } else if (cnt == 1) {
-            // inc byte ptr [rsi]
-            writeBytes(ofs, {0xfe, 0x06});
+            // inc byte ptr [rbx]
+            writeBytes(ofs, {0xfe, 0x03});
           }
         }
         break;
@@ -334,28 +352,61 @@ main()
           i += cnt - 1;
           cnt %= 256;
           if (cnt > 1) {
-            // sub byte ptr [rsi], {cnt}
-            writeBytes(ofs, {0x80, 0x2e});
+            // sub byte ptr [rbx], {cnt}
+            writeBytes(ofs, {0x80, 0x2b});
             writeAs<std::uint8_t>(ofs, cnt);
           } else if (cnt == 1) {
-            // dec byte ptr [rsi]
-            writeBytes(ofs, {0xfe, 0x0e});
+            // dec byte ptr [rbx]
+            writeBytes(ofs, {0xfe, 0x0b});
           }
         }
         break;
       case '.':
-        // mov eax, edx
-        writeBytes(ofs, {0x89, 0xd0});
-        // mov edi, edx
-        writeBytes(ofs, {0x89, 0xd7});
+        // mov (%rbx),%bpl
+        // writeBytes(ofs, {0x40, 0x8a, 0x2b});
+        // mov %bpl,(%rcx)
+        // writeBytes(ofs, {0x40, 0x88, 0x29});
+
+        // mov (%rbx),%al
+        writeBytes(ofs, {0x8a, 0x03});
+        // mov %al,(%rcx)
+        writeBytes(ofs, {0x88, 0x01});
+        // inc %rcx
+        writeBytes(ofs, {0x48, 0xff, 0xc1});
+
+        // cmp %r8,%rcx
+        // writeBytes(ofs, {0x4c, 0x39, 0xc1});
+        // cmp %rcx,%r8
+        writeBytes(ofs, {0x49, 0x39, 0xc8});
+
+        // jle 0x19
+        // writeBytes(ofs, {0x73, 0x19});
+        // jne 0x19
+        writeBytes(ofs, {0x75, 0x19});
+        // sub %rsi,%rcx
+        writeBytes(ofs, {0x48, 0x29, 0xf1});
+        // mov %rcx,%rdx (3rd argument)
+        writeBytes(ofs, {0x48, 0x89, 0xca});
+        // mov $0x1,%rax (syscall No.)
+        writeBytes(ofs, {0x48, 0xc7, 0xc0});
+        writeAs<std::uint32_t>(ofs, 0x00000001);
+        // mov $0x1,%rdi (1st argument)
+        writeBytes(ofs, {0x48, 0xc7, 0xc7});
+        writeAs<std::uint32_t>(ofs, 0x00000001);
         // syscall
         writeBytes(ofs, {0x0f, 0x05});
+        // mov %rsi,%rcx
+        writeBytes(ofs, {0x48, 0x89, 0xf1});
+#endif
         break;
       case ',':
         // xor eax, eax
         writeBytes(ofs, {0x31, 0xc0});
         // xor edi, edi
         writeBytes(ofs, {0x31, 0xff});
+        // mov $0x1,%rdx
+        writeBytes(ofs, {0x48, 0xc7, 0xc2});
+        writeAs<std::uint32_t>(ofs, 0x00000001);
         // syscall
         writeBytes(ofs, {0x0f, 0x05});
         break;
@@ -364,13 +415,13 @@ main()
         if (i + 2 < source.size()
             && (source[i + 1] == '+' || source[i + 1] == '-')
             && source[i + 2] == ']') {
-          // mov byte ptr [rsi], dh
-          writeBytes(ofs, {0x88, 0x36});
+          // movb $0x0,(%rbx)
+          writeBytes(ofs, {0xc6, 0x03, 0x00});
           i += 2;
         } else {
           loopStack.push(ofs.tellp());
-          // cmp byte ptr [rsi], dh
-          writeBytes(ofs, {0x38, 0x36});
+          // cmpb $0x0,(%rbx)
+          writeBytes(ofs, {0x80, 0x3b, 0x00});
           // je 0x********
           // ジャンプ先が決定していないので，ジャンプオフセットは後で書き込む
           // ここをジャンプオフセットの大きさに応じてshort jumpかnear jump命令を生成しようと思うと
@@ -399,7 +450,7 @@ main()
           }
           // fill loop start
           const auto curPos = ofs.tellp();
-          ofs.seekp(pos + decltype(pos){4}, std::ios_base::beg);
+          ofs.seekp(pos + decltype(pos){5}, std::ios_base::beg);
           writeAs<std::uint32_t>(ofs, curPos - ofs.tellp() - sizeof(std::uint32_t));
           ofs.seekp(curPos, std::ios_base::beg);
           loopStack.pop();
@@ -414,6 +465,23 @@ main()
     std::cerr << "']' corresponding to '[' is not found." << std::endl;
     return 1;
   }
+
+  // cmp %rcx,%rsi
+  writeBytes(ofs, {0x49, 0x39, 0xce});
+  // je 0x16
+  writeBytes(ofs, {0x74, 0x16});
+  // sub %rsi,%rcx
+  writeBytes(ofs, {0x48, 0x29, 0xf1});
+  // mov %rcx,%rdx (3rd argument)
+  writeBytes(ofs, {0x48, 0x89, 0xca});
+  // mov $0x1,%rax (syscall No.)
+  writeBytes(ofs, {0x48, 0xc7, 0xc0});
+  writeAs<std::uint32_t>(ofs, 0x00000001);
+  // mov $0x1,%rdi (1st argument)
+  writeBytes(ofs, {0x48, 0xc7, 0xc7});
+  writeAs<std::uint32_t>(ofs, 0x00000001);
+  // syscall
+  writeBytes(ofs, {0x0f, 0x05});
 
   // mov eax, 0x3c
   writeAs<std::uint8_t>(ofs, 0xb8);
